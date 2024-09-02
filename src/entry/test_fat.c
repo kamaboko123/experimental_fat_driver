@@ -13,7 +13,7 @@ void print_file(DE *entry){
         type = 'd';
     }
 
-    printf("[%c, %d] %10d %s\n", type, entry->first_cluster_low, entry->file_size, filename.display);
+    printf("[%c, %04d] %10d %s\n", type, entry->first_cluster_low, entry->file_size, filename.display);
 }
 
 void print_cluster_link(BPB *bpb, uint32_t cluster_number){
@@ -51,18 +51,24 @@ void ls_fat12(DE *entry){
     }
 }
 
-void type_fat12(BPB *bpb, DE *entry, bool print_file_info, bool print_ascii){
-    if(print_file_info){
-        printf("[File info]\n");
-        printf("filename: %s\n", entry->filename);
-        printf("file size: %d\n", entry->file_size);
-        print_cluster_link(bpb, entry->first_cluster_low);
+void print_file_info(BPB *bpb, DE *entry){
+    printf("[File info]\n");
+    printf("filename: %s\n", entry->filename);
+    printf("file size: %d\n", entry->file_size);
+    uint32_t first_cluster = get_cluster_number(get_fat12(bpb), entry);
+    printf("cluster count(trace): %d\n", count_cluster_link(bpb, first_cluster));
+    print_cluster_link(bpb, entry->first_cluster_low);
+}
+
+void type_fat12(BPB *bpb, DE *entry, bool print_info, bool print_ascii){
+    if(print_info){
+        print_file_info(bpb, entry);
     }
 
     uint8_t *fbuf = (uint8_t *)malloc(entry->file_size);
     uint32_t n = read_file(bpb, entry, fbuf, 0, entry->file_size);
     if(print_file_info){
-        printf("Readed: %d bytes\n", n);
+        printf("Read: %d bytes\n", n);
     }
 
     printf("\n[File content]\n");
@@ -78,6 +84,24 @@ void type_fat12(BPB *bpb, DE *entry, bool print_file_info, bool print_ascii){
     printf("[End of content]\n");
 
     free(fbuf);
+}
+
+void list_fat12(BPB *bpb, DE *entry){
+    uint32_t clusters = count_cluster_link(bpb, get_cluster_number(get_fat12(bpb), entry));
+    uint32_t cluster_size = bpb->sectors_per_cluster * bpb->bytes_per_sector;
+    uint32_t buf_size = clusters * cluster_size;
+    uint8_t *buf = (uint8_t *)malloc(buf_size);
+    uint32_t n = read_file(bpb, entry, buf, 0, buf_size);
+    if(n != buf_size){
+        printf("Error reading file\n");
+        return;
+    }
+
+    printf("[List file]\n");
+    ls_fat12((DE *)buf);
+    printf("[End of list]\n");
+
+    free(buf);
 }
 
 
@@ -106,15 +130,18 @@ int main(void) {
 
 
     FileName filename;
-    set_filename(&filename, "bigfile", "txt");
+    set_filename(&filename, "dir3", "");
 
     DE *entry = find_entry(rde, &filename);
     if (entry == NULL) {
         printf("File not found!\n");
         return 0;
     }
-    printf("<type bigfile.txt>\n");
-    type_fat12((BPB *)buf, entry, true, true);
+    print_file_info((BPB *)buf, entry);
+    list_fat12((BPB *)buf, entry);
+    
+    //printf("<type bigfile.txt>\n");
+    //type_fat12((BPB *)buf, entry, true, true);
     
     //printf("\n====\n");
     //dump_fat12((BPB *)buf, 0, 51);

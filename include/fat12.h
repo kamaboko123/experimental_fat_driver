@@ -70,6 +70,14 @@ typedef enum FAT_TYPE{
     FAT_TYPE_32 = 32
 } FAT_TYPE;
 
+#define FAT12_AVAILABLE 0x00000000
+#define FAT12_RESERVED 0x00000001
+#define FAT12_BAD 0x0FFFFFF7
+#define FAT12_EOC 0x0FFFFFF8
+
+#define FILE_NAME_EOT 0x00
+#define FILE_NAME_DELETED 0xE5
+
 FAT12 *get_fat12(BPB *bpb);
 RDE *get_rde(BPB *bpb);
 uint8_t *get_first_data_sector(BPB *bpb);
@@ -79,8 +87,13 @@ bool compare_short_filename(DE *entry, FileName *filename);
 void set_filename(FileName *filename, char *name, char *ext);
 void upcase(char *str, int len);
 void copy_filename(char *str1, char *str2, int len);
+uint32_t get_total_clusters(BPB *bpb);
 uint16_t get_fat12_entry(BPB *bpb, uint16_t cluster_number);
 void read_sector(BPB *bpb, uint32_t cluster, uint8_t *buf, uint32_t size);
 uint32_t read_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t from, uint32_t size);
+uint32_t find_free_cluster(BPB *bpb);
+uint32_t get_max_files_in_cluster(BPB *bpb);
+uint32_t count_cluster_link(BPB *bpb, uint32_t cluster_number);
+uint32_t get_cluster_number(uint8_t *fat, DE *entry);
 
 #endif

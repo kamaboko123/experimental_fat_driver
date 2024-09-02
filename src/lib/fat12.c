@@ -23,10 +23,14 @@ RDE *get_rde(BPB *bpb){
             + (bpb->number_of_fats * bpb->sectors_per_fat * bpb->bytes_per_sector));
 }
 
+uint32_t get_total_clusters(BPB *bpb){
+    return bpb->total_sectors / bpb->sectors_per_cluster;
+}
+
 FAT_TYPE get_fat_type(BPB *bpb){
     // fat typeを決定する唯一の方法はクラスタ数のみらしい
     // http://elm-chan.org/docs/fat.html
-    uint32_t total_clusters = bpb->total_sectors / bpb->sectors_per_cluster;
+    uint32_t total_clusters = get_total_clusters(bpb);
     if (total_clusters <= 4085){
         return FAT_TYPE_12;
     }
@@ -197,7 +201,7 @@ uint32_t read_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t from, uint32_t si
     for (int i = 0; i < (from / bpb->bytes_per_sector); i++){
         // クラスタをたどる
         start_cluster = get_fat12_entry(bpb, start_cluster);
-        if (start_cluster >= 0xFF8){
+        if (start_cluster >= FAT12_EOC){
             // EOC(End of Cluster)に到達した場合は終了
             if(i * bpb->bytes_per_sector < from){
                 // 指定された開始アドレスがファイルサイズを超えている場合はエラー
@@ -230,7 +234,7 @@ uint32_t read_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t from, uint32_t si
         
         // 次のクラスタを取得
         cluster = get_fat12_entry(bpb, cluster);
-        if (cluster >= 0xFF8){
+        if (cluster >= FAT12_EOC){
             // EOC(End of Cluster)に到達した場合は終了
             return read_size;
         }
@@ -244,3 +248,48 @@ uint32_t read_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t from, uint32_t si
     return read_size;
 }
 
+uint32_t find_free_cluster(BPB *bpb){
+    // 使用可能なクラスタを探す
+    for (int i = 2; i < get_total_clusters(bpb); i++){
+        if (get_fat12_entry(bpb, i) == FAT12_AVAILABLE){
+            return i;
+        }
+    }
+    return 0;
+}
+
+uint32_t count_free_clusters(BPB *bpb){
+    uint32_t count = 0;
+    for (int i = 2; i < get_total_clusters(bpb); i++){
+        if (get_fat12_entry(bpb, i) == FAT12_AVAILABLE){
+            count++;
+        }
+    }
+    return count;
+}
+
+uint32_t get_max_files_in_cluster(BPB *bpb){
+    // クラスタ内に格納できる最大ファイル数
+    uint32_t cluster_size = bpb->bytes_per_sector * bpb->sectors_per_cluster;
+    return cluster_size / sizeof(DE);
+}
+
+uint32_t create_file(BPB *bpb, DE *parent, FileName *filename){}
+uint32_t create_dir(BPB *bpb, DE *parent, FileName *filename){
+    RDE *rde = get_rde(bpb);
+    if(rde == parent){
+        // RDEの場合はファイル数に制限がある
+    }
+}
+
+uint32_t count_cluster_link(BPB *bpb, uint32_t cluster_number){
+    uint32_t count = 0;
+
+    uint32_t next_cluster = cluster_number;
+    do{
+        count++;
+        next_cluster = get_fat12_entry(bpb, next_cluster);
+    }while(next_cluster < FAT12_EOC && next_cluster > FAT12_RESERVED);
+
+    return count - 1;
+}
