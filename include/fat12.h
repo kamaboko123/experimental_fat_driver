@@ -64,8 +64,14 @@ typedef struct FileName{
 } FileName;
 
 
-FAT12 *get_first_fat12(BPB *bpb);
-RDE *get_first_rde(BPB *bpb);
+typedef enum FAT_TYPE{
+    FAT_TYPE_12 = 12,
+    FAT_TYPE_16 = 16,
+    FAT_TYPE_32 = 32
+} FAT_TYPE;
+
+FAT12 *get_fat12(BPB *bpb);
+RDE *get_rde(BPB *bpb);
 uint8_t *get_first_data_sector(BPB *bpb);
 
 DE *find_entry(DE *entry, FileName *filename);

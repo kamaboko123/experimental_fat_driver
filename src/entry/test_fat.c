@@ -98,7 +98,7 @@ int main(void) {
     fread(buf, 1, 1440 * 1024, f);
     fclose(f);
 
-    RDE *rde = get_first_rde((BPB *)buf);
+    RDE *rde = get_rde((BPB *)buf);
 
     printf("<dir />\n");
     ls_fat12(rde);

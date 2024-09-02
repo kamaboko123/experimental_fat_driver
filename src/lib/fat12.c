@@ -6,13 +6,13 @@
 // RDE: ルートディレクトリエントリの情報を格納
 // Cluster: データを格納する
 
-FAT12 *get_first_fat12(BPB *bpb){
+FAT12 *get_fat12(BPB *bpb){
     // 先頭から予約済みセクタの後ろからがFATになる
     uint8_t *head = (uint8_t *)bpb;
     return (FAT12 *)(head + bpb->reserved_sectors * bpb->bytes_per_sector);
 }
 
-RDE *get_first_rde(BPB *bpb){
+RDE *get_rde(BPB *bpb){
     uint8_t *head = (uint8_t *)bpb;
     // reserved sector + fat1 + fat2
     // ルートディレクトリエントリはFATの後ろにある
@@ -21,6 +21,21 @@ RDE *get_first_rde(BPB *bpb){
     return (RDE *)(head
             + (bpb->reserved_sectors * bpb->bytes_per_sector)
             + (bpb->number_of_fats * bpb->sectors_per_fat * bpb->bytes_per_sector));
+}
+
+FAT_TYPE get_fat_type(BPB *bpb){
+    // fat typeを決定する唯一の方法はクラスタ数のみらしい
+    // http://elm-chan.org/docs/fat.html
+    uint32_t total_clusters = bpb->total_sectors / bpb->sectors_per_cluster;
+    if (total_clusters <= 4085){
+        return FAT_TYPE_12;
+    }
+    else if (total_clusters <= 65525){
+        return FAT_TYPE_16;
+    }
+    else{
+        return FAT_TYPE_32;
+    }
 }
 
 uint8_t *get_first_data_sector(BPB *bpb){
@@ -51,6 +66,7 @@ DE *find_entry(DE *entry, FileName *filename){
             continue;
         }
         if (compare_short_filename(entry, filename)){
+            // ファイル名が一致した場合はエントリを返す
             return entry;
         }
         entry++;
@@ -114,7 +130,8 @@ void upcase(char *str, int len){
 
 uint32_t get_cluster_number(uint8_t *fat, DE *entry){
     uint16_t low = entry->first_cluster_low;
-    // FAT12はhighはない
+    // FAT12のクラスタ番号は12bitなので、highはない
+    // FAT16, 32の場合はhighもある
     uint16_t high = entry->first_cluster_high;
     uint32_t cluster = (high << 8) | low;
     return cluster;
@@ -122,23 +139,43 @@ uint32_t get_cluster_number(uint8_t *fat, DE *entry){
 
 uint16_t get_fat12_entry(BPB *bpb, uint16_t cluster_number){
     // FAT12エントリは12bit単位で格納されている
+    // fat[0]: entry0の下位8bit,
+    // fat[1]: enyrt1の下位4bit + entry0の上位4bit
+    // fat[2]: entry1の上位8bit
+    // fat[3]: entry2の下位8bit
+    // fat[4]: entry3の下位4bit + entry2の上位4bit
     // ...
-    // まずは、cluster_numberから関連する3byte分を取得する
-    // cluseter_number * 1.5 + (cluster_number % 2)でFATのエントリの位置を計算できる
-    // ただし、自作OSはまだ整数演算しかできないので、
-    // cluster_number * 3 / 2で計算する
+    // まずはクラスタ番号から関連するfatの3byteを取得する
+    // 3byteごとに2つのクラスタのエントリが格納されているので、
+    // cluseter_number * 1.5 でFATのエントリの位置を計算できる
+    // ただし整数演算しかできない環境向けに、まずcluster_numberを2で割って(切り捨て)、そのあと3倍する
+    // (gccの-msoft-floatオプションを使ってもいい気もするけど、別に浮動小数点演算をやりたいわけではない)
+    // offset = (cluster_number / 2) * 3
+    // entry0: 0
+    // entry1: 0
+    // entry2: 3
+    // entry3: 3
+    // entry4: 6
+    // entry5: 6
+    // ...
 
+    // 関連するFATの3byteを取得
     uint16_t fat_offset = (cluster_number / 2);
     fat_offset = fat_offset * 3;
 
-    uint8_t *p = (uint8_t *)get_first_fat12(bpb);
+    // FATの先頭アドレスを取得して、求めたoffsetを加算して、cluster_numberに対応するFATのエントリを取得
+    uint8_t *p = (uint8_t *)get_fat12(bpb);
     p += fat_offset;
 
 
     if (cluster_number % 2 == 0){
+        // クラスタ番号が偶数の場合は、
+        // byte[0]がそのまま下位8bit、byte[1]の下位4bitが上位4bitになる
         return (uint16_t)*p | (uint16_t)((*(p + 1) & 0x0f) << 8);
     }
     else{
+        // クラスタ番号が奇数の場合は、
+        // byte[1]の上位4bitが下位4bit、byte[2]が上位8bitになる
         return ((uint16_t)*(p + 1) & 0xf0) >> 4 | (uint16_t) *(p + 2) << 4;
     }
 }
@@ -153,7 +190,7 @@ void read_sector(BPB *bpb, uint32_t cluster, uint8_t *buf, uint32_t size){
 
 uint32_t read_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t from, uint32_t size){
     // ファイルの先頭クラスタを取得
-    uint32_t start_cluster = get_cluster_number(get_first_fat12(bpb), entry);
+    uint32_t start_cluster = get_cluster_number(get_fat12(bpb), entry);
 
     // 指定された開始領域までクラスタをたどる
     // fromがファイルの先頭からのバイト数なので、セクタ数で割ることで指定された開始アドレスが含まれるクラスタまで進める
