@@ -70,10 +70,10 @@ typedef enum FAT_TYPE{
     FAT_TYPE_32 = 32
 } FAT_TYPE;
 
-#define FAT12_AVAILABLE 0x00000000
-#define FAT12_RESERVED 0x00000001
-#define FAT12_BAD 0x0FFFFFF7
-#define FAT12_EOC 0x0FFFFFF8
+#define FAT12_AVAILABLE 0x000
+#define FAT12_RESERVED 0x001
+#define FAT12_BAD 0xFF7
+#define FAT12_EOC 0xFF8
 
 #define FILE_NAME_EOT 0x00
 #define FILE_NAME_DELETED 0xE5
@@ -89,11 +89,16 @@ void upcase(char *str, int len);
 void copy_filename(char *str1, char *str2, int len);
 uint32_t get_total_clusters(BPB *bpb);
 uint16_t get_fat12_entry(BPB *bpb, uint16_t cluster_number);
+void set_fat12_entry(BPB *bpb, uint16_t cluster_number, uint16_t value);
 void read_sector(BPB *bpb, uint32_t cluster, uint8_t *buf, uint32_t size);
+void write_sector(BPB *bpb, uint32_t cluster, uint8_t *buf, uint32_t size);
 uint32_t read_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t from, uint32_t size);
+uint32_t write_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t size);
 uint32_t find_free_cluster(BPB *bpb);
+DE *find_free_de(DE *entry);
 uint32_t get_max_files_in_cluster(BPB *bpb);
 uint32_t count_cluster_link(BPB *bpb, uint32_t cluster_number);
 uint32_t get_cluster_number(uint8_t *fat, DE *entry);
+uint32_t create_file(BPB *bpb, DE *parent, FileName *filename, uint32_t file_size);
 
 #endif
