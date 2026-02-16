@@ -210,7 +210,15 @@ void set_fat12_entry(BPB *bpb, uint16_t cluster_number, uint16_t value){
     for (int i = 1; i < bpb->number_of_fats; i++){
         uint8_t *fat_base = (uint8_t *)get_fat12(bpb);
         uint8_t *second_fat = fat_base + (bpb->sectors_per_fat * bpb->bytes_per_sector * i);
-        memcpy(second_fat + fat_offset, p, 3);
+        uint8_t *dest = second_fat + fat_offset;
+        
+        // 偶数の場合は2バイトをコピー、奇数の場合も2バイトをコピー
+        if (cluster_number % 2 == 0){
+            memcpy(dest, p, 2);  // byte[0]とbyte[1]
+        }
+        else{
+            memcpy(dest + 1, p + 1, 2);  // byte[1]とbyte[2]
+        }
     }
 }
 
@@ -302,13 +310,13 @@ uint32_t write_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t size){
     }
 
     uint32_t write_size = 0;
-    uint32_t bytes_per_sector = bpb->bytes_per_sector;
+    uint32_t sector_size = bpb->bytes_per_sector;
     
     // セクタ単位で書き込む
     while (write_size < size){
         uint32_t bytes_to_write = size - write_size;
-        if (bytes_to_write > bytes_per_sector){
-            bytes_to_write = bytes_per_sector;
+        if (bytes_to_write > sector_size){
+            bytes_to_write = sector_size;
         }
         
         // セクタに書き込む
@@ -381,15 +389,10 @@ uint32_t get_max_files_in_cluster(BPB *bpb){
     return cluster_size / sizeof(DE);
 }
 
-uint32_t create_file(BPB *bpb, DE *parent, FileName *filename, uint32_t file_size){
+uint32_t create_file(BPB *bpb, DE *parent, FileName *filename){
     // 新しいファイルを作成する
     // parentディレクトリ内に空きエントリを探す
     DE *free_entry = find_free_de(parent);
-    
-    if (free_entry == NULL){
-        // 空きエントリがない
-        return 0;
-    }
     
     // ファイル名を設定
     memcpy(free_entry->filename, filename->name, 8);
@@ -414,10 +417,8 @@ uint32_t create_file(BPB *bpb, DE *parent, FileName *filename, uint32_t file_siz
     
     // 次のエントリをEOTマーカーで終端する
     DE *next_entry = free_entry + 1;
-    if (next_entry->filename[0] != FILE_NAME_EOT){
-        // 既に終端がある場合は何もしない
-    }
-    else{
+    if (next_entry->filename[0] != FILE_NAME_EOT && next_entry->filename[0] != FILE_NAME_DELETED){
+        // まだEOTマーカーがない場合のみ設定
         next_entry->filename[0] = FILE_NAME_EOT;
     }
     

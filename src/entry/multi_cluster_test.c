@@ -52,7 +52,8 @@ int main(void) {
     FileName filename;
     set_filename(&filename, "large", "txt");
     
-    uint32_t result = create_file(bpb, rde, &filename, 0);
+    // create_file creates an empty file entry; file size is set when write_file is called
+    uint32_t result = create_file(bpb, rde, &filename);
     if (result == 0) {
         printf("Failed to create file!\n");
         exit(1);

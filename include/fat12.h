@@ -99,6 +99,6 @@ DE *find_free_de(DE *entry);
 uint32_t get_max_files_in_cluster(BPB *bpb);
 uint32_t count_cluster_link(BPB *bpb, uint32_t cluster_number);
 uint32_t get_cluster_number(uint8_t *fat, DE *entry);
-uint32_t create_file(BPB *bpb, DE *parent, FileName *filename, uint32_t file_size);
+uint32_t create_file(BPB *bpb, DE *parent, FileName *filename);
 
 #endif
