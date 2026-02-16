@@ -184,11 +184,56 @@ uint16_t get_fat12_entry(BPB *bpb, uint16_t cluster_number){
     }
 }
 
+void set_fat12_entry(BPB *bpb, uint16_t cluster_number, uint16_t value){
+    // FAT12エントリを設定する
+    // get_fat12_entryの逆の処理
+    uint16_t fat_offset = (cluster_number / 2) * 3;
+    uint8_t *p = (uint8_t *)get_fat12(bpb);
+    p += fat_offset;
+
+    if (cluster_number % 2 == 0){
+        // クラスタ番号が偶数の場合
+        // byte[0]に下位8bitを設定
+        *p = (uint8_t)(value & 0xFF);
+        // byte[1]の下位4bitに上位4bitを設定（上位4bitは保持）
+        *(p + 1) = (*(p + 1) & 0xF0) | (uint8_t)((value >> 8) & 0x0F);
+    }
+    else{
+        // クラスタ番号が奇数の場合
+        // byte[1]の上位4bitに下位4bitを設定（下位4bitは保持）
+        *(p + 1) = (*(p + 1) & 0x0F) | (uint8_t)((value & 0x0F) << 4);
+        // byte[2]に上位8bitを設定
+        *(p + 2) = (uint8_t)((value >> 4) & 0xFF);
+    }
+
+    // FATは通常2つあるので、両方更新する
+    for (int i = 1; i < bpb->number_of_fats; i++){
+        uint8_t *fat_base = (uint8_t *)get_fat12(bpb);
+        uint8_t *second_fat = fat_base + (bpb->sectors_per_fat * bpb->bytes_per_sector * i);
+        uint8_t *dest = second_fat + fat_offset;
+        
+        // 偶数の場合は2バイトをコピー、奇数の場合も2バイトをコピー
+        if (cluster_number % 2 == 0){
+            memcpy(dest, p, 2);  // byte[0]とbyte[1]
+        }
+        else{
+            memcpy(dest + 1, p + 1, 2);  // byte[1]とbyte[2]
+        }
+    }
+}
+
 void read_sector(BPB *bpb, uint32_t cluster, uint8_t *buf, uint32_t size){
     uint8_t *data_sector = get_first_data_sector(bpb);
     // fat entry 0, 1はデータ領域には含まれない
     data_sector += (cluster - 2) * bpb->bytes_per_sector;
     memcpy(buf, data_sector, size);
+}
+
+void write_sector(BPB *bpb, uint32_t cluster, uint8_t *buf, uint32_t size){
+    uint8_t *data_sector = get_first_data_sector(bpb);
+    // fat entry 0, 1はデータ領域には含まれない
+    data_sector += (cluster - 2) * bpb->bytes_per_sector;
+    memcpy(data_sector, buf, size);
 }
 
 
@@ -248,6 +293,62 @@ uint32_t read_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t from, uint32_t si
     return read_size;
 }
 
+uint32_t write_file(BPB *bpb, DE *entry, uint8_t *buf, uint32_t size){
+    // ファイルにデータを書き込む
+    // ファイルの先頭クラスタを取得（まだ割り当てられていない場合は新規に割り当てる）
+    uint32_t cluster = get_cluster_number(get_fat12(bpb), entry);
+    
+    if (cluster == 0){
+        // クラスタが未割り当ての場合、新規に割り当てる
+        cluster = find_free_cluster(bpb);
+        if (cluster == 0){
+            // 空きクラスタがない
+            return 0;
+        }
+        entry->first_cluster_low = cluster;
+        set_fat12_entry(bpb, cluster, FAT12_EOC);
+    }
+
+    uint32_t write_size = 0;
+    uint32_t sector_size = bpb->bytes_per_sector;
+    
+    // セクタ単位で書き込む
+    while (write_size < size){
+        uint32_t bytes_to_write = size - write_size;
+        if (bytes_to_write > sector_size){
+            bytes_to_write = sector_size;
+        }
+        
+        // セクタに書き込む
+        write_sector(bpb, cluster, buf + write_size, bytes_to_write);
+        write_size += bytes_to_write;
+        
+        if (write_size < size){
+            // まだ書き込むデータがある場合、次のクラスタを取得または割り当て
+            uint16_t next_cluster = get_fat12_entry(bpb, cluster);
+            
+            if (next_cluster >= FAT12_EOC || next_cluster == 0){
+                // 次のクラスタがない場合、新規に割り当てる
+                next_cluster = find_free_cluster(bpb);
+                if (next_cluster == 0){
+                    // 空きクラスタがない
+                    break;
+                }
+                // 現在のクラスタから次のクラスタへのリンクを設定
+                set_fat12_entry(bpb, cluster, next_cluster);
+                // 次のクラスタをEOCに設定
+                set_fat12_entry(bpb, next_cluster, FAT12_EOC);
+            }
+            cluster = next_cluster;
+        }
+    }
+    
+    // ファイルサイズを更新
+    entry->file_size = write_size;
+    
+    return write_size;
+}
+
 uint32_t find_free_cluster(BPB *bpb){
     // 使用可能なクラスタを探す
     for (int i = 2; i < get_total_clusters(bpb); i++){
@@ -268,18 +369,60 @@ uint32_t count_free_clusters(BPB *bpb){
     return count;
 }
 
+DE *find_free_de(DE *entry){
+    // 空きディレクトリエントリを探す
+    // ファイル名の先頭が0x00（未使用）または0xE5（削除済み）のエントリを返す
+    while (entry->filename[0] != FILE_NAME_EOT){
+        if (entry->filename[0] == FILE_NAME_DELETED){
+            // 削除済みエントリを再利用
+            return entry;
+        }
+        entry++;
+    }
+    // テーブルの終端に到達した場合、そのエントリを使用できる
+    return entry;
+}
+
 uint32_t get_max_files_in_cluster(BPB *bpb){
     // クラスタ内に格納できる最大ファイル数
     uint32_t cluster_size = bpb->bytes_per_sector * bpb->sectors_per_cluster;
     return cluster_size / sizeof(DE);
 }
 
-uint32_t create_file(BPB *bpb, DE *parent, FileName *filename){}
-uint32_t create_dir(BPB *bpb, DE *parent, FileName *filename){
-    RDE *rde = get_rde(bpb);
-    if(rde == parent){
-        // RDEの場合はファイル数に制限がある
+uint32_t create_file(BPB *bpb, DE *parent, FileName *filename){
+    // 新しいファイルを作成する
+    // parentディレクトリ内に空きエントリを探す
+    DE *free_entry = find_free_de(parent);
+    
+    // ファイル名を設定
+    memcpy(free_entry->filename, filename->name, 8);
+    memcpy(free_entry->ext, filename->ext, 3);
+    
+    // 属性を設定
+    free_entry->attribute = FAT12_ATTR_ARCHIVE;
+    
+    // 日時などの初期化
+    free_entry->reserved = 0;
+    free_entry->creation_time_tenths = 0;
+    free_entry->creation_time = 0;
+    free_entry->creation_date = 0;
+    free_entry->last_access_date = 0;
+    free_entry->first_cluster_high = 0;
+    free_entry->last_modification_time = 0;
+    free_entry->last_modification_date = 0;
+    
+    // クラスタとファイルサイズの初期化
+    free_entry->first_cluster_low = 0;
+    free_entry->file_size = 0;
+    
+    // 次のエントリをEOTマーカーで終端する
+    DE *next_entry = free_entry + 1;
+    if (next_entry->filename[0] != FILE_NAME_EOT && next_entry->filename[0] != FILE_NAME_DELETED){
+        // まだEOTマーカーがない場合のみ設定
+        next_entry->filename[0] = FILE_NAME_EOT;
     }
+    
+    return 1;
 }
 
 uint32_t count_cluster_link(BPB *bpb, uint32_t cluster_number){
